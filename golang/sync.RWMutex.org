@@ -1,0 +1,97 @@
+#+begin_src golang
+
+// main.go
+
+package main
+
+import (
+	"fmt"
+	"sync"
+	"time"
+)
+
+var a = 1
+
+func main() {
+
+	var rw = new(sync.RWMutex)
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	// get read lock
+        // 协程A
+	go func() {
+		rw.RLock()
+
+		for i := 0; i < 100000; i++ {
+			rw.RLock()
+			fmt.Println("read lock i:", i, " a:", a)
+			rw.RUnlock()
+			time.Sleep(500 * time.Millisecond)
+
+		}
+		rw.RUnlock()
+		wg.Done()
+	}()
+
+	// get write lock
+        // 协程B
+	go func() {
+		// 为了先让RLock 获取锁
+		time.Sleep(time.Second)
+		rw.Lock()
+		a = 2
+		fmt.Print("---------------------------------\n\n\n\n")
+		fmt.Println("write lock a:", a)
+		fmt.Print("\n\n\n\n---------------------------------")
+		rw.Unlock()
+		wg.Done()
+	}()
+	wg.Wait()
+}
+
+
+#+end_src
+这种情程序况会panic，协程B为了获取写锁会等待读的释放，因此会进入睡眠。
+协程A在for循环中，获取读锁时，看到其它线程正在尝试获取写锁，因此也会进
+入睡眠等待A协程。A协程本来就持有一人读锁，进入睡眠后无法释放形成死锁。
+进程panic.
+
+
+#+begin_src plaintext
+read lock i: 0  a: 1
+read lock i: 1  a: 1
+read lock i: 2  a: 1
+fatal error: all goroutines are asleep - deadlock!
+
+goroutine 1 [semacquire]:
+sync.runtime_Semacquire(0xc000010048?)
+	/usr/local/go/src/runtime/sema.go:62 +0x27
+sync.(*WaitGroup).Wait(0x0?)
+	/usr/local/go/src/sync/waitgroup.go:116 +0x4b
+main.main()
+	/Users/xuxiaoyu/go/src/hello/main.go:42 +0xf7
+
+goroutine 6 [sync.RWMutex.RLock]:
+sync.runtime_SemacquireRWMutexR(0x1dcd6500?, 0x18?, 0xc000070f90?)
+	/usr/local/go/src/runtime/sema.go:82 +0x26
+sync.(*RWMutex).RLock(...)
+	/usr/local/go/src/sync/rwmutex.go:71
+main.main.func1()
+	/Users/xuxiaoyu/go/src/hello/main.go:21 +0xb6
+created by main.main
+	/Users/xuxiaoyu/go/src/hello/main.go:17 +0x99
+
+goroutine 7 [sync.RWMutex.Lock]:
+sync.runtime_SemacquireRWMutex(0x0?, 0x0?, 0xc00006c050?)
+	/usr/local/go/src/runtime/sema.go:87 +0x26
+sync.(*RWMutex).Lock(0x3b9aca00?)
+	/usr/local/go/src/sync/rwmutex.go:152 +0x71
+main.main.func2()
+	/Users/xuxiaoyu/go/src/hello/main.go:34 +0x3e
+created by main.main
+	/Users/xuxiaoyu/go/src/hello/main.go:32 +0xed
+exit status 2
+#+end_src
+
+
